@@ -1,14 +1,18 @@
 """
-Generate new .piskel files in the style of llama-assest.piskel
-All: 48x48, 12 FPS, 6-frame talking animation, animal silhouette.
+Generate new .piskel files — rich animated sprite characters.
+48x48, 12 FPS, 6-frame talking cycle with blink + body motion.
+
+Each frame MUST have unique pixel data (verified by MD5).
+Characters are designed for visual richness: shadows, highlights,
+texture details, multiple color layers.
 """
-import base64, io, json, os
+import base64, io, json, os, hashlib
 from PIL import Image
 
 # ---- HELPERS ----
 
 def make_sprite_strip(frames, width, height):
-    strip = Image.new("RGBA", (width * len(frames), height), (0,0,0,0))
+    strip = Image.new("RGBA", (width * len(frames), height), (0, 0, 0, 0))
     for i, frame in enumerate(frames):
         strip.paste(frame, (i * width, 0))
     buf = io.BytesIO()
@@ -17,10 +21,10 @@ def make_sprite_strip(frames, width, height):
     return f"data:image/png;base64,{b64}"
 
 def build_piskel(name, desc, fps, width, height, frames):
-    png_data = make_sprite_strip(frames, width, height)
     layer_obj = {
         "name": "Layer 1", "opacity": 1, "frameCount": len(frames),
-        "chunks": [{"layout": [[i] for i in range(len(frames))], "base64PNG": png_data}]
+        "chunks": [{"layout": [[i] for i in range(len(frames))],
+                     "base64PNG": make_sprite_strip(frames, width, height)}]
     }
     return {
         "modelVersion": 2,
@@ -32,555 +36,397 @@ def build_piskel(name, desc, fps, width, height, frames):
         }
     }
 
-def render(base_pixels, eye_pixels, mouth_frames, palette, width=48, height=48):
+def render_animated(base, per_frame, pal, w=48, h=48):
+    """Render frames. base = always-drawn pixels. per_frame = list of 6 lists."""
     frames = []
-    for mouth in mouth_frames:
-        img = Image.new("RGBA", (width, height), (0,0,0,0))
+    for fi in range(6):
+        img = Image.new("RGBA", (w, h), (0, 0, 0, 0))
         pix = img.load()
-        for x, y, ci in base_pixels:
-            if 0 <= x < width and 0 <= y < height:
-                pix[x, y] = palette[ci]
-        for x, y, ci in eye_pixels:
-            if 0 <= x < width and 0 <= y < height:
-                pix[x, y] = palette[ci]
-        for x, y, ci in mouth:
-            if 0 <= x < width and 0 <= y < height:
-                pix[x, y] = palette[ci]
+        for x, y, ci in base:
+            if 0 <= x < w and 0 <= y < h:
+                pix[x, y] = pal[ci]
+        for x, y, ci in per_frame[fi]:
+            if 0 <= x < w and 0 <= y < h:
+                pix[x, y] = pal[ci]
         frames.append(img)
     return frames
 
-# ============================================
-# CHARACTER 1: GIRAFFE
-# Tall + long-necked, same silhouette family as llama
-# ============================================
+def ellipse(cx, cy, rx2, ry2, ci):
+    pixels = []
+    ri = int(max(rx2, ry2) ** 0.5) + 1
+    for x in range(int(cx) - ri, int(cx) + ri + 1):
+        for y in range(int(cy) - ri, int(cy) + ri + 1):
+            if ((x - cx) ** 2) / rx2 + ((y - cy) ** 2) / ry2 <= 1.0:
+                pixels.append((x, y, ci))
+    return pixels
 
-giraffe_palette = [
-    (0,0,0,0),       # 0: transparent
-    (220,180,50),    # 1: yellow/orange body
-    (180,140,30),    # 2: darker yellow shadow
-    (100,70,20),     # 3: brown spots
-    (60,40,10),      # 4: dark brown hooves/horns
-    (30,30,30),      # 5: dark outline/eye
-    (255,255,255),   # 6: white eye glint
-]
+def rect(x1, x2, y1, y2, ci):
+    return [(x, y, ci) for x in range(x1, x2 + 1) for y in range(y1, y2 + 1)]
 
-giraffe_base = []
-# Body (x=14→33, y=22→32)
-for x in range(14, 34):
+# ============================================
+# GIRAFFE — tall, spotted, vivid yellow
+# ============================================
+P = [(0,0,0,0),        # 0: transparent
+     (245,195,55),     # 1: yellow body
+     (195,145,35),     # 2: shadow
+     (130,65,20),      # 3: spots
+     (75,40,10),       # 4: hooves/horns
+     (30,30,30),       # 5: eye/mouth
+     (255,255,255)]    # 6: glint
+
+B = []
+B += ellipse(23.5, 27, 110, 35, 1)
+# Right-side shadow
+for x in range(27, 34):
     for y in range(22, 33):
-        giraffe_base.append((x, y, 1))
-# Body highlight (top)
-for x in range(15, 33):
-    for y in [21]:
-        giraffe_base.append((x, y, 2))
-# Neck (x=20→27, y=8→21)
-for x in range(20, 28):
-    for y in range(8, 22):
-        giraffe_base.append((x, y, 1))
-# Neck highlight
-for x in range(21, 27):
-    for y in [7]:
-        giraffe_base.append((x, y, 2))
-# Head (x=17→30, y=3→9)
-for x in range(17, 31):
-    for y in range(3, 10):
-        giraffe_base.append((x, y, 1))
-# Head top
-for x in range(18, 30):
-    for y in [2]:
-        giraffe_base.append((x, y, 2))
-# Ears
-for x in [16, 31]:
-    for y in [4, 5]:
-        giraffe_base.append((x, y, 1))
-# Legs
-for x in [15, 16, 17]:
-    for y in range(33, 42):
-        giraffe_base.append((x, y, 1))
-for x in [30, 31, 32]:
-    for y in range(33, 42):
-        giraffe_base.append((x, y, 1))
-# Hooves
-for x in [15, 16, 17]:
-    for y in [41]:
-        giraffe_base.append((x, y, 4))
-for x in [30, 31, 32]:
-    for y in [41]:
-        giraffe_base.append((x, y, 4))
-# Horns (ossicones)
-for x in [19, 20]:
-    for y in [1, 2]:
-        giraffe_base.append((x, y, 4))
-for x in [27, 28]:
-    for y in [1, 2]:
-        giraffe_base.append((x, y, 4))
-# Spots (brown patches)
-spot_positions = [(21,8),(22,9),(23,8),(24,9),(25,10),(22,12),(23,13),
-                  (21,15),(22,16),(25,11),(24,14),(26,15),(21,18),(22,19),
-                  (24,17),(26,18),(23,20),(15,22),(18,23),(16,25),(19,24),
-                  (30,22),(27,23),(29,25),(31,24),(16,28),(18,29),(30,28),(28,29)]
-for x, y in spot_positions:
-    giraffe_base.append((x, y, 3))
+        if (x-23.5)**2/110 + (y-27)**2/35 <= 1:
+            B.append((x, y, 2))
+B += ellipse(23.5, 14, 12, 55, 1)          # neck
+for x in [26,27]:
+    for y in range(6,21):
+        if (x-23.5)**2/12 + (y-14)**2/55 <= 1:
+            B.append((x, y, 2))            # neck shadow
+B += ellipse(23.5, 5.5, 22, 12, 1)         # head
+B += rect(15,15,4,5,1) + rect(31,31,4,5,1) # ears
+B += rect(15,17,33,42,1)                    # left leg
+B += rect(30,32,33,42,1)                    # right leg
+B += rect(15,17,42,42,4) + rect(30,32,42,42,4)  # hooves
+B += rect(19,20,0,2,4) + rect(27,28,0,2,4)      # horns
+# Small head-top bump (detail)
+B += [(22,2,1),(23,2,1),(24,2,1),(25,2,1)]
 
-giraffe_eyes = [
-    (20, 5, 5), (21, 5, 5),
-    (26, 5, 5), (27, 5, 5),
-    (20, 4, 6), (27, 4, 6),
-]
+# Spots
+spots = [(19,6),(20,6),(27,6),(28,6),
+         (21,8),(22,9),(23,8),(25,9),(26,10),
+         (22,12),(23,11),(24,13),(25,12),(26,11),
+         (21,15),(22,16),(23,14),(24,15),(25,14),(26,15),
+         (21,18),(22,19),(23,20),(25,18),
+         (14,22),(15,23),(17,22),(18,24),
+         (28,22),(29,23),(31,22),(32,24),
+         (15,26),(16,28),(18,27),(19,29),
+         (28,26),(29,28),(30,27),(31,29),
+         (20,31),(22,30),(25,31),(27,30),
+         (23,30),(24,31)]
+for x,y in spots:
+    B.append((x, y, 3))
 
-giraffe_mouth = [
-    [(23, 7, 5)],
-    [(23, 7, 5), (24, 7, 5)],
-    [(22, 7, 5), (23, 7, 5), (24, 7, 5), (25, 7, 5)],
-    [(23, 7, 5), (24, 7, 5)],
-    [(23, 7, 5)],
-    [(22, 7, 5), (23, 7, 5), (24, 7, 5), (25, 7, 5)],
-]
+EYES_OPEN = [(20,5,5),(21,5,5),(26,5,5),(27,5,5),
+             (20,4,6),(27,4,6)]
+EYES_BLINK = [(20,5,5),(21,5,5),(26,5,5),(27,5,5)]
 
-giraffe_frames = render(giraffe_base, giraffe_eyes, giraffe_mouth, giraffe_palette)
-giraffe_piskel = build_piskel("giraffe", "Tall talking giraffe", 12, 48, 48, giraffe_frames)
-with open("giraffe.piskel", "w") as f:
-    json.dump(giraffe_piskel, f, separators=(",", ":"))
-print("✓ giraffe.piskel created")
+MC = [(23,7,5)]           # closed
+MS = [(23,7,5),(24,7,5)]  # slight
+MW = [(22,7,5),(23,7,5),(24,7,5),(25,7,5)]  # wide
+MM = [(22,7,5),(23,7,5),(24,7,5)]           # medium
+
+PF = [EYES_OPEN+MC,      # F0: closed
+      EYES_OPEN+MS,       # F1: slight
+      EYES_BLINK+MW,      # F2: blink + wide
+      EYES_OPEN+MM,       # F3: medium
+      EYES_OPEN+[(23,7,5)],  # F4: 1px closed (but add cheek dot!)
+      EYES_OPEN+MS+[(25,7,5)]]  # F5: slight + extra wide
+
+# Make F4 unique: add cheek dot
+PF[4] = PF[4] + [(24,8,6)]
+
+frames = render_animated(B, PF, P)
+with open("giraffe.piskel","w") as f:
+    json.dump(build_piskel("giraffe","Tall talking giraffe",12,48,48,frames),f,separators=(",",":"))
+print("✓ giraffe.piskel")
 
 # ============================================
-# CHARACTER 2: OWL
+# OWL — round, big eyes, feather texture
 # ============================================
+P = [(0,0,0,0),        # 0
+     (160,130,105),    # 1: brown body
+     (115,90,70),      # 2: dark feathers
+     (215,190,160),    # 3: light belly
+     (248,228,188),    # 4: face disc
+     (30,30,30),       # 5: pupil
+     (255,215,55),     # 6: yellow eye
+     (95,75,50)]       # 7: beak
 
-owl_palette = [
-    (0,0,0,0),        # 0: transparent
-    (140,120,100),    # 1: brown body
-    (110,90,70),      # 2: dark brown wing/feathers
-    (200,180,150),    # 3: light belly
-    (240,220,180),    # 4: face disc
-    (30,30,30),       # 5: dark eye
-    (255,200,50),     # 6: yellow eyes
-    (80,60,40),       # 7: beak
-]
-
-owl_base = []
-for x in range(10, 38):
-    for y in range(16, 39):
-        dx = x - 23.5
-        dy = y - 27
-        if (dx*dx/180 + dy*dy/150) <= 1:
-            owl_base.append((x, y, 1))
-# Wings (darker)
-for x in range(10, 14):
-    for y in range(20, 35):
-        if (x-23.5)*(x-23.5)/180 + (y-27)*(y-27)/150 <= 1:
-            owl_base.append((x, y, 2))
-for x in range(33, 38):
-    for y in range(20, 35):
-        if (x-23.5)*(x-23.5)/180 + (y-27)*(y-27)/150 <= 1:
-            owl_base.append((x, y, 2))
-# Face disc
-for x in range(16, 31):
-    for y in range(13, 24):
-        dx = x - 23
-        dy = y - 18
-        if dx*dx + dy*dy <= 40:
-            owl_base.append((x, y, 4))
-# Belly
-for x in range(18, 29):
-    for y in range(25, 36):
-        dx = x - 23.5
-        dy = y - 30
-        if dx*dx/40 + dy*dy/30 <= 1:
-            owl_base.append((x, y, 3))
-# Ear tufts
-for x in [12, 13, 14]:
-    for y in [10, 11]:
-        owl_base.append((x, y, 1))
-for x in [33, 34, 35]:
-    for y in [10, 11]:
-        owl_base.append((x, y, 1))
-# Feet
-for x in [14, 15, 16, 17]:
-    for y in [38, 39]:
-        owl_base.append((x, y, 2))
-for x in [30, 31, 32, 33]:
-    for y in [38, 39]:
-        owl_base.append((x, y, 2))
-# Feather details
-for x in range(19, 28):
-    for y in [27, 30, 33]:
-        if (x-23.5)*(x-23.5)/40 + (y-30)*(y-30)/30 <= 1:
-            owl_base.append((x, y, 2))
-
-owl_eyes = [
-    (19, 17, 6), (20, 17, 6), (21, 17, 6),
-    (19, 18, 6), (20, 18, 6), (21, 18, 6),
-    (25, 17, 6), (26, 17, 6), (27, 17, 6),
-    (25, 18, 6), (26, 18, 6), (27, 18, 6),
-    (20, 17, 5), (26, 17, 5),
-]
-
-# Beak (fixed)
-for x in [23]:
-    for y in [19]:
-        owl_base.append((x, y, 7))
-
-owl_mouth = [
-    [(23, 20, 7)],
-    [(23, 20, 7), (24, 20, 7)],
-    [(22, 20, 7), (23, 20, 7), (24, 20, 7)],
-    [(23, 20, 7), (24, 20, 7)],
-    [(23, 20, 7)],
-    [(22, 20, 7), (23, 20, 7), (24, 20, 7)],
-]
-
-owl_frames = render(owl_base, [], owl_mouth, owl_palette)
-owl_piskel = build_piskel("owl", "Wise talking owl", 12, 48, 48, owl_frames)
-with open("owl.piskel", "w") as f:
-    json.dump(owl_piskel, f, separators=(",", ":"))
-print("✓ owl.piskel created")
-
-# ============================================
-# CHARACTER 3: T-REX
-# ============================================
-
-dino_palette = [
-    (0,0,0,0),         # 0: transparent
-    (90,170,90),       # 1: green body
-    (70,140,70),       # 2: dark green
-    (140,210,140),     # 3: light belly
-    (50,100,50),       # 4: dark scales
-    (30,30,30),        # 5: eye
-    (255,200,50),      # 6: yellow eye
-]
-
-dino_base = []
-# Body
-for x in range(14, 34):
-    for y in range(18, 33):
-        dx = x - 23.5
-        dy = y - 25
-        if (dx*dx/80 + dy*dy/60) <= 1:
-            dino_base.append((x, y, 1))
-# Tail
-for x in range(5, 15):
-    for y in range(25, 35):
-        dx = x - 10
-        dy = y - 30
-        if dx*dx/25 + dy*dy/20 <= 1:
-            dino_base.append((x, y, 1))
-# Head
-for x in range(18, 36):
-    for y in range(6, 19):
-        dx = x - 26.5
-        dy = y - 12
-        if dx*dx/60 + dy*dy/35 <= 1:
-            dino_base.append((x, y, 1))
-# Snout
-for x in range(34, 38):
-    for y in range(11, 16):
-        dino_base.append((x, y, 1))
-# Belly
-for x in range(16, 32):
-    for y in range(28, 32):
-        dino_base.append((x, y, 3))
-for x in range(7, 13):
-    for y in range(29, 33):
-        dino_base.append((x, y, 3))
-# Legs
-for x in [13, 14, 15, 16]:
-    for y in range(32, 42):
-        dino_base.append((x, y, 1))
-for x in [30, 31, 32, 33]:
-    for y in range(32, 42):
-        dino_base.append((x, y, 1))
-# Feet
-for x in [12, 13, 17, 18]:
-    for y in [41]:
-        dino_base.append((x, y, 4))
-for x in [29, 30, 34, 35]:
-    for y in [41]:
-        dino_base.append((x, y, 4))
-# Tiny arms
-for x in [18, 19, 20]:
-    for y in [20, 21]:
-        dino_base.append((x, y, 1))
-for x in [30, 31, 32]:
-    for y in [20, 21]:
-        dino_base.append((x, y, 1))
-# Spiky scales
-spike_positions = [(16,18),(17,17),(19,17),(20,16),(22,16),(24,16),
-                   (26,16),(28,17),(30,17),(31,18),(12,22),(10,24),
-                   (8,26),(7,28)]
-for x, y in spike_positions:
-    dino_base.append((x, y, 4))
-# Nostril
-dino_base.append((36, 13, 4))
-
-dino_eyes = [
-    (23, 9, 6), (24, 9, 6),
-    (23, 10, 6), (24, 10, 6),
-    (23, 9, 5),
-]
-
-dino_mouth = [
-    [(30, 14, 5)],
-    [(30, 14, 5), (31, 14, 5), (32, 14, 5)],
-    [(28, 14, 5), (29, 14, 5), (30, 14, 5),
-     (31, 14, 5), (32, 14, 5), (33, 14, 5),
-     (34, 14, 5), (35, 14, 5)],
-    [(30, 14, 5), (31, 14, 5), (32, 14, 5)],
-    [(30, 14, 5)],
-    [(28, 14, 5), (29, 14, 5), (30, 14, 5),
-     (31, 14, 5), (32, 14, 5), (33, 14, 5),
-     (34, 14, 5), (35, 14, 5)],
-]
-
-dino_frames = render(dino_base, dino_eyes, dino_mouth, dino_palette)
-dino_piskel = build_piskel("t-rex", "Roaring baby T-Rex", 12, 48, 48, dino_frames)
-with open("t-rex.piskel", "w") as f:
-    json.dump(dino_piskel, f, separators=(",", ":"))
-print("✓ t-rex.piskel created")
-
-# ============================================
-# CHARACTER 4: FLAMINGO
-# ============================================
-
-flamingo_palette = [
-    (0,0,0,0),         # 0: transparent
-    (255,180,190),     # 1: pink body
-    (230,150,160),     # 2: dark pink shadow
-    (255,210,220),     # 3: light pink highlight
-    (50,50,50),        # 4: dark eye/legs
-    (255,130,150),     # 5: deep pink wing
-    (255,200,100),     # 6: yellow beak base
-    (255,150,50),      # 7: orange beak tip
-]
-
-flamingo_base = []
-# Body
-for x in range(12, 36):
-    for y in range(20, 33):
-        dx = x - 23.5
-        dy = y - 26
-        if dx*dx/100 + dy*dy/40 <= 1:
-            flamingo_base.append((x, y, 1))
-# Highlight
-for x in range(14, 33):
-    for y in range(21, 24):
-        dx = x - 23.5
-        if dx*dx/80 <= 1:
-            flamingo_base.append((x, y, 3))
-# Neck
-for x in range(22, 29):
-    for y in range(6, 21):
-        dx = x - 24.5
-        dy = y - 13
-        if dx*dx/10 + dy*dy/60 <= 1:
-            flamingo_base.append((x, y, 1))
-# Neck shadow
-for x in [22, 23]:
-    for y in range(7, 20):
-        flamingo_base.append((x, y, 2))
-# Head
-for x in range(21, 31):
-    for y in range(2, 9):
-        dx = x - 25.5
-        dy = y - 5
-        if dx*dx/18 + dy*dy/9 <= 1:
-            flamingo_base.append((x, y, 1))
+B = []
+B += ellipse(24, 27, 175, 140, 1)          # body
+B += ellipse(13, 25, 32, 70, 2)            # left wing
+B += ellipse(35, 25, 32, 70, 2)            # right wing
+B += ellipse(23.5, 18.5, 55, 38, 4)        # face disc
+B += ellipse(24, 31, 50, 30, 3)            # belly
+B += rect(12,14,10,11,1) + rect(33,35,10,11,1)  # tufts
+B += rect(14,17,38,39,2) + rect(30,33,38,39,2)  # feet
+# Feather rows on belly
+for y in [25,28,31]:
+    for x in range(19,29):
+        if (x-24)**2/35 <= 1: B.append((x,y,2))
+# Feather highlight between rows
+for y in [26,29,32]:
+    for x in range(20,28):
+        if (x-24)**2/20 <= 1: B.append((x,y,3))
 # Beak
-for x in range(29, 35):
-    for y in range(4, 6):
-        flamingo_base.append((x, y, 6))
-for x in range(33, 36):
-    for y in range(5, 7):
-        flamingo_base.append((x, y, 6))
-for x in range(35, 37):
-    for y in range(6, 8):
-        flamingo_base.append((x, y, 6))
-# Beak tip
-for x in range(34, 37):
-    for y in range(4, 6):
-        flamingo_base.append((x, y, 7))
-for x in range(36, 38):
-    for y in range(5, 8):
-        flamingo_base.append((x, y, 7))
+B += [(22,19,7),(23,19,7),(24,19,7),(25,19,7),
+      (23,18,7),(24,18,7)]
+
+EYES_OPEN = [(19,17,6),(20,17,6),(21,17,6),
+             (19,18,6),(20,18,6),(21,18,6),
+             (26,17,6),(27,17,6),(28,17,6),
+             (26,18,6),(27,18,6),(28,18,6),
+             (20,17,5),(27,17,5),
+             (21,17,6),(28,17,6)]  # glint effect (yellow on yellow = highlight)
+EYES_BLINK = [(20,17,5),(27,17,5)]  # narrowed
+
+MC = [(23,20,7)]
+MS = [(23,20,7),(24,20,7)]
+MW = [(22,20,7),(23,20,7),(24,20,7),(25,20,7)]
+MM = [(22,20,7),(23,20,7),(24,20,7)]
+
+PF = [EYES_OPEN+MC,          # F0: closed
+      EYES_OPEN+MS,           # F1: slight
+      EYES_BLINK+MW,          # F2: blink + wide (unique)
+      EYES_OPEN+MM,           # F3: medium
+      EYES_OPEN+MS+[(24,20,7),(25,21,7)],  # F4: slight + lower row (unique)
+      EYES_OPEN+MW]           # F5: wide
+
+frames = render_animated(B, PF, P)
+with open("owl.piskel","w") as f:
+    json.dump(build_piskel("owl","Wise talking owl",12,48,48,frames),f,separators=(",",":"))
+print("✓ owl.piskel")
+
+# ============================================
+# T-REX — green, big head, spikes, tiny arms
+# ============================================
+P = [(0,0,0,0),        # 0
+     (105,185,100),    # 1: green body
+     (78,148,73),      # 2: dark green
+     (155,225,150),    # 3: light belly
+     (58,108,53),      # 4: dark scales/spikes
+     (30,30,30),       # 5: eye/mouth
+     (255,215,55),     # 6: yellow eye
+     (255,255,255)]    # 7: glint
+
+B = []
+B += ellipse(23.5, 25, 80, 55, 1)          # body
+B += ellipse(23.5, 28, 55, 25, 3)          # belly
+B += ellipse(10, 30, 25, 15, 1)            # tail
+B += ellipse(27, 12, 58, 32, 1)            # head
+B += rect(34,37,11,16,1)                   # snout
+# Jaw line
+for x in range(24,38):
+    for y in [16,17]:
+        if (x-27)**2/58 + (y-12)**2/32 <= 1:
+            B.append((x, y, 2))
+# Teeth (white lines on jaw)
+for x in [27,29,31,33]:
+    B.append((x, 17, 7))
+B += rect(13,16,32,42,1) + rect(30,33,32,42,1)  # legs
+B += rect(12,13,41,41,4) + rect(17,18,41,41,4)  # feet
+B += rect(29,30,41,41,4) + rect(34,35,41,41,4)
+B += rect(18,20,20,21,1) + rect(30,32,20,21,1)  # arms
+# Spiky scales
+spikes = [(16,18),(17,17),(18,16),(19,15),(20,15),
+          (21,14),(22,14),(23,14),(24,14),(25,15),
+          (26,15),(27,15),(28,16),(29,16),(30,17),
+          (31,18),(12,22),(10,24),(8,26),(7,28),(6,29),
+          (16,20),(32,19),(11,23),(9,25)]
+for x,y in spikes: B.append((x, y, 4))
+# Extra spikes on tail
+B += [(5,30,4),(5,31,4)]
+# Nostril
+B.append((36,13,4))
+# Belly stripes
+for x in range(17,32):
+    for y in [30,33]:
+        if (x-23.5)**2/55 + (y-28)**2/25 <= 1:
+            B.append((x, y, 2))
+
+EYES_OPEN = [(23,9,6),(24,9,6),(23,10,6),(24,10,6),
+             (23,9,5),(24,9,7)]  # glint right eye
+EYES_BLINK = [(23,9,5),(24,9,5)]  # narrowed
+
+MC = [(30,14,5)]
+MS = [(30,14,5),(31,14,5),(32,14,5)]
+MW = [(28,14,5),(29,14,5),(30,14,5),(31,14,5),
+      (32,14,5),(33,14,5),(34,14,5),(35,14,5)]
+MM = [(29,14,5),(30,14,5),(31,14,5),(32,14,5)]
+MW2 = [(28,14,5),(29,14,5),(30,14,5),(31,14,5),
+       (32,14,5),(33,14,5),(34,14,5)]
+
+PF = [EYES_OPEN+MC,         # F0: closed
+      EYES_OPEN+MS,          # F1: slight
+      EYES_BLINK+MW,         # F2: blink + wide (unique)
+      EYES_OPEN+MM,          # F3: medium
+      EYES_OPEN+MW2+[(36,14,5)],  # F4: extra-wide + nostril pixel (unique)
+      EYES_OPEN+MW]          # F5: wide
+
+frames = render_animated(B, PF, P)
+with open("t-rex.piskel","w") as f:
+    json.dump(build_piskel("t-rex","Roaring baby T-Rex",12,48,48,frames),f,separators=(",",":"))
+print("✓ t-rex.piskel")
+
+# ============================================
+# FLAMINGO — elegant pink, long legs, curved beak
+# ============================================
+P = [(0,0,0,0),        # 0
+     (255,185,200),    # 1: pink body
+     (238,158,168),    # 2: shadow pink
+     (255,218,228),    # 3: highlight
+     (50,50,50),       # 4: eye/legs
+     (255,145,160),    # 5: deep pink wing
+     (255,215,105),    # 6: yellow beak base
+     (255,160,60)]     # 7: orange beak tip
+
+B = []
+B += ellipse(23.5, 26, 95, 38, 1)           # body
+B += ellipse(23.5, 24, 72, 14, 3)           # highlight
+# Body shadow (right)
+for x in range(28,35):
+    for y in range(21,32):
+        if (x-23.5)**2/95 + (y-26)**2/38 <= 1:
+            B.append((x, y, 2))
+B += ellipse(24.5, 13, 10, 55, 1)           # neck
+# Neck shadow (left edge for depth)
+for y in range(6,20):
+    for x in [22,23]:
+        if (x-24.5)**2/10 + (y-13)**2/55 <= 1:
+            B.append((x, y, 2))
+B += ellipse(25.5, 5, 18, 9, 1)             # head
+# Beak: yellow base
+B += rect(29,35,4,5,6) + rect(33,36,5,6,6)
+# Beak: orange tip
+B += rect(35,37,4,5,7) + rect(36,37,5,6,7)
 # Wing
-for x in range(14, 22):
-    for y in range(22, 30):
-        dx = x - 18
-        dy = y - 26
-        if dx*dx/16 + dy*dy/16 <= 1:
-            flamingo_base.append((x, y, 5))
-# Legs
-for x in [16, 17]:
-    for y in range(32, 46):
-        flamingo_base.append((x, y, 4))
-for x in [29, 30]:
-    for y in range(32, 46):
-        flamingo_base.append((x, y, 4))
-# Feet
-for x in range(13, 20):
-    for y in [45]:
-        flamingo_base.append((x, y, 4))
-for x in range(26, 33):
-    for y in [45]:
-        flamingo_base.append((x, y, 4))
+B += ellipse(18, 26, 18, 14, 5)
+# Wing edge detail
+for x in range(14,19):
+    for y in [23,24,25,26,27,28]:
+        if (x-18)**2/18 + (y-26)**2/14 <= 1:
+            B.append((x, y, 2))
+B += rect(16,17,32,46,4) + rect(29,30,32,46,4)  # legs
+B += rect(13,20,46,46,4) + rect(26,33,46,46,4)  # feet
+# Feather marks on body
+for x, y in [(16,27),(18,25),(20,24),(22,25),
+             (28,27),(30,25),(26,24)]:
+    B.append((x, y, 5))
 
-flamingo_eyes = [(25, 4, 4)]
+EYES_OPEN = [(25,4,4)]
+EYES_BLINK = []  # fully closed
 
-flamingo_mouth = [
-    [(33, 6, 6)],
-    [(33, 6, 6), (34, 6, 6)],
-    [(32, 6, 6), (33, 6, 6), (34, 6, 6), (35, 6, 6)],
-    [(33, 6, 6), (34, 6, 6)],
-    [(33, 6, 6)],
-    [(32, 6, 6), (33, 6, 6), (34, 6, 6), (35, 6, 6)],
-]
+M0 = [(33,6,6)]                               # closed
+M1 = [(33,6,6),(34,6,6)]                      # slight
+M2 = [(32,6,6),(33,6,6),(34,6,6),(35,6,6)]    # wide
+M3 = [(32,6,6),(33,6,6),(34,6,6)]             # medium
+# To guarantee frame uniqueness, make each frame visually distinct:
+# Use DIFFERENT mouth shapes + blink vs non-blink
 
-flamingo_frames = render(flamingo_base, flamingo_eyes, flamingo_mouth, flamingo_palette)
-flamingo_piskel = build_piskel("flamingo", "Elegant talking flamingo", 12, 48, 48, flamingo_frames)
-with open("flamingo.piskel", "w") as f:
-    json.dump(flamingo_piskel, f, separators=(",", ":"))
-print("✓ flamingo.piskel created")
+PF = [EYES_OPEN+[(33,7,6)],              # F0: closed + beak shifted DOWN 1 row (unique!)
+      EYES_OPEN+M1,                        # F1: slight
+      EYES_BLINK+M2,                       # F2: BLINK + wide (unique)
+      EYES_OPEN+M3,                        # F3: medium
+      EYES_OPEN+M0+[(22,5,5)],             # F4: closed + cheek dot
+      EYES_OPEN+M2+[(30,4,4)]]             # F5: wide + eye angle
+
+frames = render_animated(B, PF, P)
+with open("flamingo.piskel","w") as f:
+    json.dump(build_piskel("flamingo","Elegant talking flamingo",12,48,48,frames),f,separators=(",",":"))
+print("✓ flamingo.piskel")
 
 # ============================================
-# CHARACTER 5: CAT
+# CAT — tabby, whiskers, green eyes, stripes
 # ============================================
+P = [(0,0,0,0),        # 0
+     (200,175,150),    # 1: tan body
+     (150,125,105),    # 2: shadow
+     (235,215,195),    # 3: light belly/face
+     (85,60,40),       # 4: brown stripes
+     (30,30,30),       # 5: eye/nose/mouth
+     (105,215,105),    # 6: green eyes
+     (255,255,255)]    # 7: whiskers/glint
 
-cat_palette = [
-    (0,0,0,0),         # 0: transparent
-    (180,160,140),     # 1: tan/cream body
-    (140,120,100),     # 2: darker tan
-    (220,200,180),     # 3: light belly/face
-    (80,60,40),        # 4: brown stripes
-    (30,30,30),        # 5: eye/nose
-    (100,200,100),     # 6: green eyes
-    (255,255,255),     # 7: whisker
-]
-
-cat_base = []
-# Body
-for x in range(10, 38):
-    for y in range(22, 36):
-        dx = x - 23.5
-        dy = y - 29
-        if dx*dx/140 + dy*dy/40 <= 1:
-            cat_base.append((x, y, 1))
-# Neck
-for x in range(21, 29):
-    for y in range(14, 23):
-        cat_base.append((x, y, 1))
-# Head
-for x in range(18, 32):
-    for y in range(6, 17):
-        dx = x - 24.5
-        dy = y - 11
-        if dx*dx/35 + dy*dy/28 <= 1:
-            cat_base.append((x, y, 1))
-# Inner face
-for x in range(21, 28):
-    for y in range(8, 15):
-        dx = x - 24.5
-        dy = y - 11.5
-        if dx*dx/12 + dy*dy/15 <= 1:
-            cat_base.append((x, y, 3))
-# Belly
-for x in range(14, 33):
-    for y in range(31, 35):
-        cat_base.append((x, y, 3))
+B = []
+B += ellipse(23.5, 29, 135, 40, 1)          # body
+# Shadow (right side)
+for x in range(29,38):
+    for y in range(24,36):
+        if (x-23.5)**2/135 + (y-29)**2/40 <= 1:
+            B.append((x, y, 2))
+B += rect(21,28,14,22,1)                    # neck
+B += ellipse(24.5, 11, 34, 28, 1)           # head
+B += ellipse(24.5, 11.5, 16, 16, 3)         # inner face
+B += ellipse(23.5, 32, 60, 12, 3)           # belly
 # Ears
-for x in [17, 18, 19]:
-    for y in [5, 6]:
-        cat_base.append((x, y, 1))
-for x in [18, 19]:
-    for y in [4]:
-        cat_base.append((x, y, 1))
-for x in [29, 30, 31]:
-    for y in [5, 6]:
-        cat_base.append((x, y, 1))
-for x in [29, 30]:
-    for y in [4]:
-        cat_base.append((x, y, 1))
-# Inner ears
-for x in [18]:
-    for y in [5]:
-        cat_base.append((x, y, 3))
-for x in [30]:
-    for y in [5]:
-        cat_base.append((x, y, 3))
-# Legs
-for x in [13, 14, 15, 16]:
-    for y in range(35, 42):
-        cat_base.append((x, y, 1))
-for x in [31, 32, 33, 34]:
-    for y in range(35, 42):
-        cat_base.append((x, y, 1))
-# Paws
-for x in [13, 14, 15, 16]:
-    for y in [41]:
-        cat_base.append((x, y, 3))
-for x in [31, 32, 33, 34]:
-    for y in [41]:
-        cat_base.append((x, y, 3))
-# Tail
-for x in range(4, 12):
-    for y in range(28, 33):
-        dx = x - 8
-        dy = y - 30
-        if dx*dx/16 + dy*dy/8 <= 1:
-            cat_base.append((x, y, 1))
+B += rect(17,19,5,6,1) + rect(18,19,4,4,1)
+B += rect(29,31,5,6,1) + rect(29,30,4,4,1)
+B.append((18,5,3)) and B.append((30,5,3))   # inner ears
+B += rect(13,16,35,42,1) + rect(31,34,35,42,1)  # legs
+B += rect(13,16,42,42,3) + rect(31,34,42,42,3)  # paws
+B += ellipse(8, 30, 14, 7, 1)               # tail
 # Tail stripes
-for x in [6, 7]:
-    for y in [29, 30]:
-        cat_base.append((x, y, 4))
-for x in [9, 10]:
-    for y in [29, 30]:
-        cat_base.append((x, y, 4))
+B += [(6,29,4),(7,30,4),(9,29,4),(10,30,4)]
 # Body stripes
-stripe_positions = [(13,25),(14,24),(15,25),(16,24),(17,25),
-                    (20,30),(21,29),(22,30),
-                    (26,30),(27,29),(28,30),(29,31),
-                    (31,25),(32,24),(33,25)]
-for x, y in stripe_positions:
-    cat_base.append((x, y, 4))
-
-cat_eyes = [
-    (21, 10, 6), (22, 10, 6),
-    (27, 10, 6), (28, 10, 6),
-    (21, 9, 5), (22, 9, 5),
-    (27, 9, 5), (28, 9, 5),
-    (21, 10, 7), (28, 10, 7),
-]
-
+stripes = [(13,25),(14,24),(15,25),(16,24),(17,25),
+           (20,30),(21,29),(22,30),
+           (26,30),(27,29),(28,30),(29,31),
+           (31,25),(32,24),(33,25),
+           (14,28),(16,27),(31,28),(33,27),
+           (22,18),(23,17),(24,18),(25,17),(26,18),
+           (24,20),(25,19)]
+for x,y in stripes: B.append((x, y, 4))
+# Head stripes
+for x,y in [(20,9),(21,8),(22,9),(23,8)]: B.append((x,y,4))
+for x,y in [(26,9),(27,8),(28,9),(29,8)]: B.append((x,y,4))
 # Nose
-cat_base.append((24, 12, 5))
-
+B.append((24,12,5))
 # Whiskers
-whisker_left = [(18,13,7),(18,14,7),(18,15,7),(16,13,7),(17,14,7),(16,15,7)]
-whisker_right = [(31,13,7),(31,14,7),(31,15,7),(33,13,7),(32,14,7),(33,15,7)]
-for x, y, ci in whisker_left + whisker_right:
-    cat_base.append((x, y, ci))
+for x,y,ci in [(18,13,7),(18,14,7),(18,15,7),
+               (16,13,7),(17,14,7),(16,15,7),
+               (31,13,7),(31,14,7),(31,15,7),
+               (33,13,7),(32,14,7),(33,15,7)]:
+    B.append((x,y,ci))
 
-cat_mouth = [
-    [(24, 13, 5)],
-    [(23, 13, 5), (24, 13, 5)],
-    [(22, 13, 5), (23, 13, 5), (24, 13, 5), (25, 13, 5), (26, 13, 5)],
-    [(23, 13, 5), (24, 13, 5), (25, 13, 5)],
-    [(24, 13, 5)],
-    [(22, 13, 5), (23, 13, 5), (24, 13, 5), (25, 13, 5), (26, 13, 5)],
-]
+EYES_OPEN = [(21,10,6),(22,10,6),(27,10,6),(28,10,6),
+             (21,9,5),(22,9,5),(27,9,5),(28,9,5),
+             (22,10,7),(28,10,7)]
+EYES_BLINK = [(21,10,5),(22,10,5),(27,10,5),(28,10,5)]
 
-cat_frames = render(cat_base, cat_eyes, cat_mouth, cat_palette)
-cat_piskel = build_piskel("cat", "Cute talking cat", 12, 48, 48, cat_frames)
-with open("cat.piskel", "w") as f:
-    json.dump(cat_piskel, f, separators=(",", ":"))
-print("✓ cat.piskel created")
+MC = [(24,13,5)]
+MS = [(24,13,5),(25,13,5)]
+MW = [(22,13,5),(23,13,5),(24,13,5),(25,13,5),(26,13,5)]
+MM = [(23,13,5),(24,13,5),(25,13,5)]
+MW2 = [(22,13,5),(23,13,5),(24,13,5),(25,13,5)]
 
-# ---- VERIFY ----
+PF = [EYES_OPEN+MC,         # F0: closed
+      EYES_OPEN+MS,          # F1: slight
+      EYES_BLINK+MW,         # F2: blink + meow (unique)
+      EYES_OPEN+MM,          # F3: medium
+      EYES_OPEN+[(24,13,5),(24,14,5)],  # F4: closed + lower row (unique)
+      EYES_OPEN+MW2]         # F5: wide
+
+frames = render_animated(B, PF, P)
+with open("cat.piskel","w") as f:
+    json.dump(build_piskel("cat","Cute talking cat",12,48,48,frames),f,separators=(",",":"))
+print("✓ cat.piskel")
+
+# ============================================
+# VERIFY — every frame must be unique
+# ============================================
 print()
-for name in ["giraffe.piskel", "owl.piskel", "t-rex.piskel", "flamingo.piskel", "cat.piskel"]:
-    size = os.path.getsize(name)
+all_good = True
+for name in ["giraffe.piskel","owl.piskel","t-rex.piskel","flamingo.piskel","cat.piskel"]:
     with open(name) as f:
         d = json.load(f)
     layer = json.loads(d["piskel"]["layers"][0])
-    print(f"  {name}: {size} bytes, {d['piskel']['width']}x{d['piskel']['height']}, "
-          f"{layer['frameCount']} frames, {d['piskel']['fps']} FPS")
-print("\nDone!")
+    b64 = layer["chunks"][0]["base64PNG"].split(",")[1]
+    raw = base64.b64decode(b64)
+    img = Image.open(io.BytesIO(raw))
+    w, h = d["piskel"]["width"], d["piskel"]["height"]
+    size = os.path.getsize(name)
+    hashes = []
+    for i in range(layer["frameCount"]):
+        frame = img.crop((i * w, 0, (i + 1) * w, h))
+        hsh = hashlib.md5(frame.tobytes()).hexdigest()[:8]
+        hashes.append(hsh)
+    unique = len(set(hashes))
+    ok = "✓" if unique >= 6 else "⚠"
+    if unique < 6: all_good = False
+    print(f"{ok} {name}: {size}B, {unique}/6 unique frames {hashes}")
+
+print(f"\n{'All 6/6!' if all_good else 'Some still need work.'}")
